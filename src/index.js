@@ -1,24 +1,10 @@
 import React from 'react'
-import fetch from 'isomorphic-unfetch'
 import ws from 'isomorphic-ws'
 import { authExchange } from '@urql/exchange-auth'
-import {
-  dedupExchange,
-  // debugExchange,
-  cacheExchange,
-  fetchExchange,
-  subscriptionExchange,
-  Provider,
-  createClient,
-} from 'urql'
+import { createClient, dedupExchange, errorExchange, fetchExchange, subscriptionExchange, ssrExchange, Provider } from 'urql'
+import { cacheExchange } from '@urql/exchange-graphcache'
 import { SubscriptionClient } from 'subscriptions-transport-ws'
-
-export function generateUrqlClient(
-  auth,
-  gqlEndpoint,
-  // headers, //do we still need them? see addAuthToOperation()
-  publicRole = 'public'
-) {
+export function generateUrqlClient(auth, gqlEndpoint, publicRole) {
   const ssr = typeof window === 'undefined'
   const getAuth = () => {
     if (!auth.isAuthenticated()) {
@@ -70,31 +56,30 @@ export function generateUrqlClient(
   }
   const uri = gqlEndpoint
 
-  const wsUri = uri.startsWith('https')
-    ? uri.replace(/^https/, 'wss')
-    : uri.replace(/^http/, 'ws')
+  const wsUri = uri.startsWith('https') ? uri.replace(/^https/, 'wss') : uri.replace(/^http/, 'ws')
 
   const subscriptionClient = new SubscriptionClient(
     wsUri,
     {
       reconnect: true,
       connectionParams: {
-        headers: !auth.isAuthenticated()
-          ? { role: publicRole }
-          : { Authorization: `Bearer ${auth.getJWTToken()}` },
+        headers: !auth.isAuthenticated() ? { role: publicRole } : { Authorization: `Bearer ${auth.getJWTToken()}` },
       },
     },
     ws
   )
 
-  const client = createClient({
+  const urqlClient = createClient({
     url: uri,
-    fetch,
     requestPolicy: 'cache-and-network',
     exchanges: [
       dedupExchange,
-      // debugExchange,
-      cacheExchange,
+      cacheExchange(),
+      errorExchange({
+        onError: (error) => {
+          console.error(error.message.replace('[GraphQL]', 'Server error:'))
+        },
+      }),
       authExchange({
         getAuth,
         addAuthToOperation,
@@ -109,12 +94,12 @@ export function generateUrqlClient(
     ],
   })
 
-  return client
+  return urqlClient
 }
 
 export function NhostUrqlProvider(props) {
   const { auth, gqlEndpoint, publicRole = 'public', children } = props
-  const client = generateUrqlClient(auth, gqlEndpoint, publicRole)
+  const urqlClient = generateUrqlClient(auth, gqlEndpoint, publicRole)
 
-  return <Provider value={client}>{children}</Provider>
+  return <Provider value={urqlClient}>{children}</Provider>
 }
